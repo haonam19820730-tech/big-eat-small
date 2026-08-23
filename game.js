@@ -1,9 +1,10 @@
 (() => {
   const WORLD = 5800;
   const FOOD_N = 560;
-  const BOTS_SOLO = 30;
-  const BOTS_MULTI = 18;
+  const BOTS_SOLO = 12;
+  const BOTS_MULTI = 8;
   const MAX_HUMANS = 8;
+  const MAX_LIVES = 3;
   const START_MASS = 10;
   const PI2 = Math.PI * 2;
   const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -25,7 +26,7 @@
   const ui = {
     menu: $("menu"), join: $("join"), dead: $("dead"), hud: $("hud"),
     boost: $("boost"), boostBar: $("boostBar"), exitBtn: $("exitBtn"),
-    board: $("board"), rank: $("rank"), score: $("score"),
+    board: $("board"), rank: $("rank"), score: $("score"), lives: $("lives"),
     kills: $("kills"), roomBar: $("roomBar"), roomCode: $("roomCode"),
     name: $("name"), joinCode: $("joinCode"), toast: $("toast"),
     deadTitle: $("deadTitle"), deadScore: $("deadScore"), deadHint: $("deadHint"),
@@ -48,7 +49,7 @@
   let roomCode = "";
   let peer = null;
   const conns = new Map();
-  let foodDirty = true, netAcc = 0, toastTimer = 0, tipUntil = 0, respawnAt = 0;
+  let foodDirty = true, netAcc = 0, physAcc = 0, toastTimer = 0, tipUntil = 0, matchOver = false;
   let ac = null;
   const foodGrid = new Map();
   const bodyGrid = new Map();
@@ -62,17 +63,14 @@
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-  function bodyRadius(mass) { return 5.4 + Math.pow(Math.max(1, mass), 0.40) * 1.18; }
-  function headRadius(mass) { return 8.4 + Math.pow(Math.max(1, mass), 0.52) * 2.1; }
-  function radius(mass) { return headRadius(mass); }
-  function spacing(mass) { return Math.max(3.2, bodyRadius(mass) * 0.42); }
-  function segs(mass) {
-    const worldLen = headRadius(mass) * 12 + mass * 2.4;
-    return Math.max(32, Math.min(320, Math.round(worldLen / spacing(mass))));
-  }
+  function radius(mass) { return 6.6 + Math.pow(Math.max(1, mass), 0.42) * 1.32; }
+  function bodyRadius(mass) { return radius(mass); }
+  function headRadius(mass) { return radius(mass); }
+  function spacing(mass) { return radius(mass) * 0.36; }
+  function segs(mass) { return Math.max(28, Math.min(240, (18 + mass * 1.2) | 0)); }
   function speedOf(s) {
     const slow = 1 - Math.min(0.22, s.mass / 1100);
-    return (142 + 30 / (1 + bodyRadius(s.mass) * 0.04)) * slow * (s.boost ? 1.72 : 1);
+    return (148 + 28 / (1 + radius(s.mass) * 0.04)) * slow * (s.boost ? 1.7 : 1);
   }
   function makeCode() {
     let s = "";
@@ -145,9 +143,9 @@
       id: foodId++,
       x: x ?? rand(40, WORLD - 40),
       y: y ?? rand(40, WORLD - 40),
-      value: value ?? (isKill ? rand(4.5, 7) : special ? rand(0.28, 0.4) : rand(0.1, 0.18)),
-      color: color || (isKill ? "#ffd166" : special ? "#9b5de5" : pick(COLORS)),
-      r: isKill ? rand(6.2, 8.8) : special ? rand(4, 5.2) : rand(2.3, 3.4),
+      value: value ?? (isKill ? rand(2.6, 4.2) : special ? rand(1.6, 2.4) : rand(1, 2.2)),
+      color: color || (isKill ? "#ffd166" : pick(COLORS)),
+      r: isKill ? rand(4.8, 6.2) : special ? rand(3.6, 4.8) : rand(2.8, 4.2),
       special: !!special,
       kill: isKill,
     });
@@ -188,6 +186,10 @@
       mood: "eat",
       moodT: 0,
       kills: 0,
+      deaths: 0,
+      out: false,
+      score: 0,
+      respawnAt: 0,
     };
     snakes.push(s);
     return s;
@@ -196,13 +198,13 @@
   function resetWorld(botCount) {
     food.length = 0; snakes.length = 0; bits.length = 0; feed.length = 0;
     foodId = 1; snakeId = 1; foodDirty = true;
-    best = START_MASS; kills = 0; diedTo = "";
+    best = START_MASS; kills = 0; diedTo = ""; matchOver = false;
     for (let i = 0; i < FOOD_N; i++) addFood();
     for (let i = 0; i < 18; i++) {
       const cx = rand(400, WORLD - 400), cy = rand(400, WORLD - 400);
-      for (let k = 0; k < 14; k++) addFood(cx + rand(-90, 90), cy + rand(-90, 90), rand(0.1, 0.18), pick(COLORS), false, false);
+      for (let k = 0; k < 14; k++) addFood(cx + rand(-90, 90), cy + rand(-90, 90), rand(1, 2.2), pick(COLORS), false, false);
     }
-    for (let i = 0; i < 8; i++) addFood(undefined, undefined, rand(0.28, 0.4), undefined, true, false);
+    for (let i = 0; i < 8; i++) addFood(undefined, undefined, rand(1.6, 2.4), undefined, true, false);
     me = makeSnake({ name: playerName(), human: true, color: COLORS[0], protect: 2200 });
     for (let i = 0; i < botCount; i++) makeSnake({ bot: true, mass: rand(8, 16) });
     cam.x = me.pts[0].x; cam.y = me.pts[0].y; cam.z = 1;
@@ -212,8 +214,8 @@
   }
 
   function dropBody(s) {
-    const pieces = clamp((s.pts.length / 3) | 0, 14, 26);
-    const each = Math.max(3.8, (s.mass * 0.92) / pieces);
+    const pieces = clamp((s.pts.length / 3) | 0, 14, 28);
+    const each = Math.max(2.4, (s.mass * 0.8) / pieces);
     const step = Math.max(1, (s.pts.length / pieces) | 0);
     for (let i = 0; i < s.pts.length; i += step) {
       const p = s.pts[i];
@@ -222,16 +224,72 @@
     }
   }
 
+  function kickIfNeeded(s) {
+    if (netMode !== "host" || !s.human || s === me) return;
+    for (const [k, c] of conns) {
+      if (c.pid === s.id) {
+        try { c.send(JSON.stringify({ t: "kicked" })); c.close(); } catch (_) {}
+        conns.delete(k);
+      }
+    }
+  }
+
+  function remainingPlayers() {
+    return snakes.filter((s) => !s.out);
+  }
+
+  function checkEnd() {
+    if (matchOver || mode !== "play") return;
+    const left = remainingPlayers();
+    if (left.length > 1) return;
+    matchOver = true;
+    const w = left[0];
+    const myScore = me ? Math.floor(me.score) : 0;
+    if (!w) showDead("沒人獲勝", myScore, "再來一局");
+    else if (w === me) showDead("你贏了", myScore, "最後留下的就是贏家");
+    else showDead(w.name + " 獲勝", myScore, "最後留下的就是贏家");
+    if (netMode === "host") {
+      const raw = JSON.stringify({ t: "over", name: w ? w.name : "", win: w === me ? 0 : 1 });
+      for (const c of conns.values()) if (c.open) try { c.send(raw); } catch (_) {}
+    }
+  }
+
+  function respawnSnake(s) {
+    const pos = emptySpot();
+    const ang = rand(0, PI2);
+    const mass = START_MASS;
+    s.mass = mass;
+    s.alive = true;
+    s.boost = false;
+    s.stamina = 1;
+    s.out = false;
+    s.respawnAt = 0;
+    s.angle = ang;
+    s.targetAngle = ang;
+    s.protect = performance.now() + 2200;
+    s.pts = [];
+    const spc = spacing(mass);
+    for (let i = 0; i < segs(mass); i++) {
+      s.pts.push({ x: pos.x - Math.cos(ang) * spc * i, y: pos.y - Math.sin(ang) * spc * i });
+    }
+    if (s === me) {
+      cam.x = pos.x; cam.y = pos.y;
+      input.angle = ang;
+    }
+  }
+
   function kill(victim, eater) {
-    if (!victim.alive) return;
+    if (!victim.alive || victim.out) return;
     if (performance.now() < victim.protect) return;
     if (eater && performance.now() < eater.protect) return;
     victim.alive = false;
     victim.boost = false;
+    victim.deaths = (victim.deaths || 0) + 1;
     burst(victim.pts[0].x, victim.pts[0].y, victim.color, 36, 320);
     dropBody(victim);
     if (eater && eater.alive) {
       eater.kills += 1;
+      eater.score = (eater.score || 0) + 80;
       addFeed(victim.name + " 撞上了 " + eater.name);
       if (eater === me) {
         kills += 1;
@@ -240,16 +298,26 @@
         beep(440, 0.12, "square", 0.04);
       }
     } else addFeed(victim.name + " 撞上去了");
+    const leftLives = MAX_LIVES - victim.deaths;
+    if (victim.deaths >= MAX_LIVES) {
+      victim.out = true;
+      addFeed(victim.name + " 出局了");
+      if (victim === me) {
+        beep(160, 0.3, "triangle", 0.07);
+        toast("死了 3 次，出局");
+      } else kickIfNeeded(victim);
+    } else {
+      victim.respawnAt = performance.now() + 1400;
+      if (victim === me) toast("還剩 " + leftLives + " 條命");
+    }
     if (victim === me) {
       best = Math.max(best, me.mass);
       diedTo = eater ? eater.name : "";
-      beep(180, 0.28, "triangle", 0.07);
-      if (netMode === "solo") {
-        showDead(eater ? "頭撞到 " + eater.name + " 的身體" : "頭撞到身體了", segs(best), "本局最長");
-      } else {
-        toast(eater ? "頭撞到 " + eater.name + " 了，即將重生" : "撞上去了，即將重生");
-        respawnAt = performance.now() + 1400;
-      }
+    }
+    checkEnd();
+    if (victim === me && victim.out && !matchOver && netMode === "solo") {
+      matchOver = true;
+      showDead("你出局了", Math.floor(me.score || 0), "死了 3 次");
     }
   }
 
@@ -291,7 +359,7 @@
     const head = s.pts[0];
     let flee = null, hunt = null, fd = 1e9, hd = 1e9;
     for (const o of snakes) {
-      if (o === s || !o.alive) continue;
+      if (o === s || !o.alive || o.out) continue;
       const d = Math.hypot(o.pts[0].x - head.x, o.pts[0].y - head.y);
       const danger = 130 + bodyRadius(o.mass) * 4 + o.pts.length * 0.35;
       if (d < danger && d < fd) {
@@ -348,28 +416,31 @@
     const diff = norm(s.targetAngle - s.angle);
     s.angle += clamp(diff, -turn * dt, turn * dt);
     const sp = speedOf(s);
+    const r = radius(s.mass);
     let nx = s.pts[0].x + Math.cos(s.angle) * sp * dt;
     let ny = s.pts[0].y + Math.sin(s.angle) * sp * dt;
-    const r = headRadius(s.mass);
     if (nx < r) { nx = r; s.angle = Math.PI - s.angle; s.targetAngle = s.angle; }
     if (nx > WORLD - r) { nx = WORLD - r; s.angle = Math.PI - s.angle; s.targetAngle = s.angle; }
     if (ny < r) { ny = r; s.angle = -s.angle; s.targetAngle = s.angle; }
     if (ny > WORLD - r) { ny = WORLD - r; s.angle = -s.angle; s.targetAngle = s.angle; }
-    s.pts.unshift({ x: nx, y: ny });
+    s.pts[0].x = nx;
+    s.pts[0].y = ny;
     const spc = spacing(s.mass);
     for (let i = 1; i < s.pts.length; i++) {
-      const a = s.pts[i - 1], b = s.pts[i];
-      const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-      if (d !== spc) {
-        b.x = a.x + (b.x - a.x) / d * spc;
-        b.y = a.y + (b.y - a.y) / d * spc;
-      }
+      const px = s.pts[i - 1].x, py = s.pts[i - 1].y;
+      let dx = s.pts[i].x - px, dy = s.pts[i].y - py;
+      const d = Math.hypot(dx, dy) || 0.0001;
+      s.pts[i].x = px + dx / d * spc;
+      s.pts[i].y = py + dy / d * spc;
     }
     const want = segs(s.mass);
     while (s.pts.length > want) s.pts.pop();
     while (s.pts.length < want) {
       const lastP = s.pts[s.pts.length - 1];
-      s.pts.push({ x: lastP.x, y: lastP.y });
+      const prev = s.pts[s.pts.length - 2] || lastP;
+      let dx = lastP.x - prev.x, dy = lastP.y - prev.y;
+      const d = Math.hypot(dx, dy) || 1;
+      s.pts.push({ x: lastP.x + dx / d * spc, y: lastP.y + dy / d * spc });
     }
     if (s.stamina == null) s.stamina = 1;
     if (s.boost && s.stamina > 0.02) {
@@ -386,7 +457,7 @@
     for (const s of snakes) {
       if (!s.alive) continue;
       const head = s.pts[0];
-      const r = headRadius(s.mass);
+      const r = radius(s.mass);
       const eaten = [];
       nearby(foodGrid, head.x, head.y, (f) => {
         const dx = f.x - head.x, dy = f.y - head.y;
@@ -399,6 +470,7 @@
       if (eaten.length) {
         for (const f of eaten) {
           s.mass += f.value;
+          s.score = (s.score || 0) + Math.round(f.value * 10);
           burst(f.x, f.y, f.color, f.kill ? 12 : 3, f.kill ? 140 : 70);
           const ix = food.indexOf(f);
           if (ix >= 0) food.splice(ix, 1);
@@ -412,12 +484,12 @@
     for (const s of snakes) {
       if (!s.alive) continue;
       const head = s.pts[0];
-      const hr = headRadius(s.mass);
+      const hr = radius(s.mass);
       nearby(bodyGrid, head.x, head.y, (item) => {
-        if (!s.alive || item.s === s || !item.s.alive) return;
-        const neck = Math.max(10, ((headRadius(item.s.mass) / spacing(item.s.mass)) | 0) + 6);
+        if (!s.alive || item.s === s || !item.s.alive || item.s.out) return;
+        const neck = Math.max(8, ((radius(item.s.mass) / spacing(item.s.mass)) | 0) + 5);
         if (item.i < neck) return;
-        const hitR = hr * 0.62 + bodyRadius(item.s.mass) * 0.78;
+        const hitR = hr * 0.7 + radius(item.s.mass) * 0.7;
         const d = Math.hypot(item.x - head.x, item.y - head.y);
         if (d < hitR) kill(s, item.s);
       });
@@ -428,36 +500,24 @@
     t += dt;
     if (netMode !== "client") rebuildFoodGrid();
     if (netMode === "client") {
-      if (me && me.alive) {
+      if (me && me.alive && !me.out) {
         me.targetAngle = input.angle;
         me.boost = input.boost && me.stamina > 0.05;
         stepSnake(me, dt);
       }
     } else {
-      if (me && me.alive) {
+      if (me && me.alive && !me.out) {
         me.targetAngle = input.angle;
         me.boost = input.boost && me.stamina > 0.05;
       }
-      for (const s of snakes) stepSnake(s, dt);
+      for (const s of snakes) if (s.alive && !s.out) stepSnake(s, dt);
       eatAndFight();
-      const wantBots = netMode === "solo" ? BOTS_SOLO : BOTS_MULTI;
-      const liveBots = snakes.filter((s) => s.bot && s.alive).length;
-      if (liveBots < wantBots) makeSnake({ bot: true, mass: rand(8, 14) });
-      for (let i = snakes.length - 1; i >= 0; i--) {
-        const s = snakes[i];
-        if (!s.alive && s !== me) {
-          s.gone = (s.gone || 0) + dt;
-          if (s.gone > 0.9) snakes.splice(i, 1);
-        }
+      const now = performance.now();
+      for (const s of snakes) {
+        if (!s.alive && !s.out && s.respawnAt && now >= s.respawnAt) respawnSnake(s);
       }
       if (me && me.alive) best = Math.max(best, me.mass);
-      if (me && !me.alive && netMode !== "solo" && respawnAt && performance.now() >= respawnAt) {
-        respawnAt = 0;
-        const s = makeSnake({ name: me.name, human: true, color: me.color, id: me.id, protect: 2500 });
-        snakes.splice(snakes.indexOf(me), 1);
-        me = s;
-        toast("重生了，先吃點變大");
-      }
+      checkEnd();
     }
     for (let i = bits.length - 1; i >= 0; i--) {
       const b = bits[i];
@@ -480,9 +540,9 @@
   }
 
   function drawSnake(s) {
-    if (!s.pts.length) return;
-    const br = bodyRadius(s.mass) * cam.z;
-    const r = headRadius(s.mass) * cam.z;
+    if (!s.pts.length || s.out && !s.alive) return;
+    if (!s.alive) return;
+    const r = radius(s.mass) * cam.z;
     const head = w2s(s.pts[0].x, s.pts[0].y);
     if (head.x < -80 || head.y < -80 || head.x > W + 80 || head.y > H + 80) {
       let any = false;
@@ -493,25 +553,19 @@
       if (!any) return;
     }
     const flash = performance.now() < s.protect && ((performance.now() / 120) | 0) % 2 === 0;
-    ctx.globalAlpha = !s.alive ? 0.25 : flash ? 0.55 : 1;
-    const step = s.pts.length > 110 ? 3 : s.pts.length > 50 ? 2 : 1;
-    const last = s.pts.length - 1 || 1;
-    for (let i = last; i >= 0; i -= step) {
-      const p = w2s(s.pts[i].x, s.pts[i].y);
-      const k = i / last;
-      const tail = k < 0.18 ? 0.55 + k / 0.18 * 0.45 : 1;
-      ctx.fillStyle = s.color;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, br * tail, 0, PI2);
-      ctx.fill();
-      if (i % (8 * step) === 0) {
-        ctx.fillStyle = "rgba(255,255,255,0.13)";
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, br * 0.42, 0, PI2);
-        ctx.fill();
-      }
-    }
+    ctx.globalAlpha = flash ? 0.55 : 1;
+    ctx.strokeStyle = s.color;
     ctx.fillStyle = s.color;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = r * 2;
+    ctx.beginPath();
+    for (let i = s.pts.length - 1; i >= 0; i--) {
+      const p = w2s(s.pts[i].x, s.pts[i].y);
+      if (i === s.pts.length - 1) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
     ctx.beginPath();
     ctx.arc(head.x, head.y, r, 0, PI2);
     ctx.fill();
@@ -555,7 +609,7 @@
       return;
     }
     if (me && me.pts[0]) {
-      const wantZ = clamp(1.12 * (28 / headRadius(me.mass)), 0.38, 1.22);
+      const wantZ = clamp(1.12 * (28 / radius(me.mass)), 0.38, 1.22);
       cam.z += (wantZ - cam.z) * 0.05;
       cam.x += (me.pts[0].x - cam.x) * 0.14;
       cam.y += (me.pts[0].y - cam.y) * 0.14;
@@ -619,14 +673,15 @@
 
   function updateHud() {
     if (!me) return;
-    const ranked = snakes.filter((s) => s.alive).sort((a, b) => b.mass - a.mass);
+    const ranked = snakes.filter((s) => !s.out).sort((a, b) => b.score - a.score);
     const rank = ranked.indexOf(me) + 1;
     ui.rank.textContent = rank > 0 ? String(rank) : "-";
-    ui.score.textContent = String(me.pts.length);
+    ui.score.textContent = String(Math.floor(me.score || 0));
+    if (ui.lives) ui.lives.textContent = String(Math.max(0, MAX_LIVES - (me.deaths || 0)));
     ui.kills.textContent = String(kills);
     if (ui.boostBar) ui.boostBar.style.height = Math.round((me.stamina || 0) * 100) + "%";
     ui.board.innerHTML = ranked.slice(0, 6).map((s, i) =>
-      `<div class="row ${s === me ? "me" : ""}"><span>${i + 1}. ${esc(s.name)}</span><span>${s.pts.length}</span></div>`
+      `<div class="row ${s === me ? "me" : ""}"><span>${i + 1}. ${esc(s.name)}</span><span>${Math.floor(s.score || 0)}</span></div>`
     ).join("");
     ui.feed.innerHTML = feed.map((f) => `<div>${esc(f.text)}</div>`).join("");
   }
@@ -669,7 +724,14 @@
     const dt = clamp((ts - last) / 1000, 0, 0.05);
     last = ts;
     if (mode === "play") {
-      simulate(dt);
+      physAcc += dt;
+      const STEP = 1 / 60;
+      let steps = 0;
+      while (physAcc >= STEP && steps < 4) {
+        simulate(STEP);
+        physAcc -= STEP;
+        steps += 1;
+      }
       netAcc += dt;
       if (netAcc >= 0.08) {
         netAcc = 0;
@@ -720,9 +782,10 @@
   function packState() {
     const msg = {
       t: "st",
-      p: snakes.map((s) => [
+      p: snakes.filter((s) => !s.out && s.pts[0]).map((s) => [
         s.id, s.pts[0].x, s.pts[0].y, s.angle, s.mass,
         s.boost ? 1 : 0, s.alive ? 1 : 0, s.name, s.color, s.human ? 1 : 0,
+        s.deaths || 0, Math.floor(s.score || 0),
       ]),
     };
     if (foodDirty) {
@@ -734,17 +797,25 @@
   function applyState(msg) {
     const seen = new Set();
     for (const row of msg.p) {
-      const [id, x, y, angle, mass, boost, alive, name, color, human] = row;
+      const [id, x, y, angle, mass, boost, alive, name, color, human, deaths, score] = row;
       seen.add(id);
       let s = snakes.find((q) => q.id === id);
       if (!s) {
         s = makeSnake({ id, name, color, human: !!human, bot: !human, pos: { x, y }, mass });
       } else if (!(me && id === me.id && me.alive)) {
-        s.pts.unshift({ x, y });
-        if (s.pts.length > segs(mass) + 4) s.pts.length = segs(mass);
+        s.pts[0].x = x; s.pts[0].y = y;
+        const spc = spacing(mass);
+        for (let i = 1; i < s.pts.length; i++) {
+          const px = s.pts[i - 1].x, py = s.pts[i - 1].y;
+          let dx = s.pts[i].x - px, dy = s.pts[i].y - py;
+          const d = Math.hypot(dx, dy) || 0.0001;
+          s.pts[i].x = px + dx / d * spc;
+          s.pts[i].y = py + dy / d * spc;
+        }
       }
       s.angle = angle; s.mass = mass; s.boost = !!boost; s.alive = !!alive;
       s.name = name; s.color = color;
+      s.deaths = deaths || 0; s.score = score || s.score || 0;
       if (me && id === me.id) me = s;
     }
     for (let i = snakes.length - 1; i >= 0; i--) if (!seen.has(snakes[i].id)) snakes.splice(i, 1);
@@ -773,7 +844,7 @@
     }
     if (netMode === "client" && msg.t === "st") applyState(msg);
     if (msg.t === "hello" && netMode === "host") {
-      if (snakes.filter((s) => s.human).length >= MAX_HUMANS) {
+      if (snakes.filter((s) => s.human && !s.out).length >= MAX_HUMANS) {
         conn.send(JSON.stringify({ t: "full" })); return;
       }
       const s = makeSnake({ name: String(msg.name || "玩家").slice(0, 8), human: true, protect: 2500 });
@@ -789,6 +860,23 @@
       toast("已進入房間");
     }
     if (msg.t === "full") toast("房間滿了");
+    if (msg.t === "kicked") {
+      toast("死了 3 次，已退出房間");
+      showMenu();
+    }
+    if (msg.t === "over") {
+      matchOver = true;
+      const myScore = me ? Math.floor(me.score) : 0;
+      if (msg.name && msg.name === (me && me.name)) showDead("你贏了", myScore, "最後留下的就是贏家");
+      else showDead((msg.name || "有人") + " 獲勝", myScore, "最後留下的就是贏家");
+    }
+    if (msg.t === "rst") {
+      matchOver = false;
+      snakes.length = 0; food.length = 0;
+      if (msg.id && me) me.id = msg.id;
+      showPlay();
+      toast("新的一局開始");
+    }
   }
   function wireConn(conn) {
     conn.on("data", (d) => onPeerData(conn, d));
@@ -796,7 +884,7 @@
       conns.delete(conn.peer);
       if (netMode === "host" && conn.pid) {
         const s = snakes.find((q) => q.id === conn.pid);
-        if (s) kill(s, null);
+        if (s && !s.out) { s.alive = false; s.out = true; checkEnd(); }
         toast("有人離開了");
       }
       if (netMode === "client") { toast("房主已離開"); showMenu(); }
@@ -864,12 +952,24 @@
   $("btnJoinGo").onclick = () => startJoin(ui.joinCode.value);
   $("btnAgain").onclick = () => {
     unlockAudio();
+    matchOver = false;
     if (netMode === "host") {
-      ui.dead.classList.add("hidden");
-      const s = makeSnake({ name: me.name, human: true, color: me.color, id: me.id, protect: 2500 });
-      snakes.splice(snakes.indexOf(me), 1);
-      me = s; best = START_MASS; kills = 0;
+      const guests = [];
+      for (const c of conns.values()) {
+        const old = snakes.find((q) => q.id === c.pid);
+        guests.push({ conn: c, name: old ? old.name : "玩家", color: old ? old.color : pick(COLORS) });
+      }
+      resetWorld(BOTS_MULTI);
+      for (const g of guests) {
+        const ns = makeSnake({ name: g.name, human: true, color: g.color, protect: 2500 });
+        g.conn.pid = ns.id;
+        if (g.conn.open) try { g.conn.send(JSON.stringify({ t: "rst", id: ns.id })); } catch (_) {}
+      }
       showPlay();
+      foodDirty = true;
+      broadcastState();
+    } else if (netMode === "client") {
+      toast("等房主開新的一局");
     } else startSolo();
   };
   $("btnHome").onclick = showMenu;
