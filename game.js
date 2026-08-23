@@ -65,11 +65,14 @@
   function bodyRadius(mass) { return 5.4 + Math.pow(Math.max(1, mass), 0.40) * 1.18; }
   function headRadius(mass) { return 8.4 + Math.pow(Math.max(1, mass), 0.52) * 2.1; }
   function radius(mass) { return headRadius(mass); }
-  function spacing(mass) { return Math.max(3.3, bodyRadius(mass) * 0.34); }
-  function segs(mass) { return Math.max(28, Math.min(170, (26 + mass * 1.45) | 0)); }
+  function spacing(mass) { return Math.max(3.2, bodyRadius(mass) * 0.42); }
+  function segs(mass) {
+    const worldLen = headRadius(mass) * 12 + mass * 2.4;
+    return Math.max(32, Math.min(320, Math.round(worldLen / spacing(mass))));
+  }
   function speedOf(s) {
-    const slow = 1 - Math.min(0.28, s.mass / 900);
-    return (148 + 36 / (1 + headRadius(s.mass) * 0.035)) * slow * (s.boost ? 1.85 : 1);
+    const slow = 1 - Math.min(0.22, s.mass / 1100);
+    return (142 + 30 / (1 + bodyRadius(s.mass) * 0.04)) * slow * (s.boost ? 1.72 : 1);
   }
   function makeCode() {
     let s = "";
@@ -136,15 +139,17 @@
     return { x: rand(300, WORLD - 300), y: rand(300, WORLD - 300) };
   }
 
-  function addFood(x, y, value, color, special) {
+  function addFood(x, y, value, color, special, kill) {
+    const isKill = !!kill;
     food.push({
       id: foodId++,
       x: x ?? rand(40, WORLD - 40),
       y: y ?? rand(40, WORLD - 40),
-      value: value ?? (special ? rand(6, 12) : rand(1, 2.2)),
-      color: color || (special ? "#ffd166" : pick(COLORS)),
-      r: special ? rand(6, 9) : rand(2.6, 4.2),
+      value: value ?? (isKill ? rand(4.5, 7) : special ? rand(0.28, 0.4) : rand(0.1, 0.18)),
+      color: color || (isKill ? "#ffd166" : special ? "#9b5de5" : pick(COLORS)),
+      r: isKill ? rand(6.2, 8.8) : special ? rand(4, 5.2) : rand(2.3, 3.4),
       special: !!special,
+      kill: isKill,
     });
     foodDirty = true;
   }
@@ -195,11 +200,11 @@
     for (let i = 0; i < FOOD_N; i++) addFood();
     for (let i = 0; i < 18; i++) {
       const cx = rand(400, WORLD - 400), cy = rand(400, WORLD - 400);
-      for (let k = 0; k < 14; k++) addFood(cx + rand(-90, 90), cy + rand(-90, 90), rand(1.4, 3), pick(COLORS), false);
+      for (let k = 0; k < 14; k++) addFood(cx + rand(-90, 90), cy + rand(-90, 90), rand(0.1, 0.18), pick(COLORS), false, false);
     }
-    for (let i = 0; i < 10; i++) addFood(undefined, undefined, undefined, undefined, true);
+    for (let i = 0; i < 8; i++) addFood(undefined, undefined, rand(0.28, 0.4), undefined, true, false);
     me = makeSnake({ name: playerName(), human: true, color: COLORS[0], protect: 2200 });
-    for (let i = 0; i < botCount; i++) makeSnake({ bot: true, mass: rand(8, 42) });
+    for (let i = 0; i < botCount; i++) makeSnake({ bot: true, mass: rand(8, 16) });
     cam.x = me.pts[0].x; cam.y = me.pts[0].y; cam.z = 1;
     input.angle = me.angle;
     tipUntil = performance.now() + 3200;
@@ -207,13 +212,13 @@
   }
 
   function dropBody(s) {
-    const pieces = clamp(s.pts.length, 14, 100);
-    const each = Math.max(1.5, s.mass / pieces);
+    const pieces = clamp((s.pts.length / 3) | 0, 14, 26);
+    const each = Math.max(3.8, (s.mass * 0.92) / pieces);
     const step = Math.max(1, (s.pts.length / pieces) | 0);
     for (let i = 0; i < s.pts.length; i += step) {
       const p = s.pts[i];
-      addFood(p.x + rand(-12, 12), p.y + rand(-12, 12), rand(each * 0.75, each * 1.25), s.color, each > 2.4);
-      if (i % 4 === 0) burst(p.x, p.y, s.color, 5, 150);
+      addFood(p.x + rand(-14, 14), p.y + rand(-14, 14), rand(each * 0.85, each * 1.15), s.color, false, true);
+      if (i % 3 === 0) burst(p.x, p.y, "#ffd166", 6, 170);
     }
   }
 
@@ -339,7 +344,7 @@
   function stepSnake(s, dt) {
     if (!s.alive) return;
     if (s.bot && netMode !== "client") thinkBot(s, dt);
-    const turn = (s.boost ? 4.6 : 3.35) * (20 / (10 + radius(s.mass)));
+    const turn = (s.boost ? 5.5 : 4.6);
     const diff = norm(s.targetAngle - s.angle);
     s.angle += clamp(diff, -turn * dt, turn * dt);
     const sp = speedOf(s);
@@ -386,21 +391,22 @@
       nearby(foodGrid, head.x, head.y, (f) => {
         const dx = f.x - head.x, dy = f.y - head.y;
         const d = Math.hypot(dx, dy);
-        if (d < r + f.r + 10) {
-          f.x -= dx * 0.12; f.y -= dy * 0.12;
+        if (d < r + f.r + (f.kill ? 16 : 8)) {
+          f.x -= dx * (f.kill ? 0.16 : 0.1); f.y -= dy * (f.kill ? 0.16 : 0.1);
         }
         if (d < r + f.r * 0.2 && !f._eaten) { f._eaten = true; eaten.push(f); }
       });
       if (eaten.length) {
         for (const f of eaten) {
           s.mass += f.value;
-          burst(f.x, f.y, f.color, f.special ? 10 : 3, 80);
+          burst(f.x, f.y, f.color, f.kill ? 12 : 3, f.kill ? 140 : 70);
           const ix = food.indexOf(f);
           if (ix >= 0) food.splice(ix, 1);
         }
         foodDirty = true;
-        if (s === me) beep(660 + Math.min(400, s.mass), 0.04, "sine", 0.03);
-        while (food.length < FOOD_N) addFood();
+        if (s === me) beep(eaten.some((f) => f.kill) ? 520 : 700, 0.045, "sine", 0.035);
+        let crumbs = food.filter((f) => !f.kill).length;
+        while (crumbs < FOOD_N) { addFood(); crumbs++; }
       }
     }
     for (const s of snakes) {
@@ -436,7 +442,7 @@
       eatAndFight();
       const wantBots = netMode === "solo" ? BOTS_SOLO : BOTS_MULTI;
       const liveBots = snakes.filter((s) => s.bot && s.alive).length;
-      if (liveBots < wantBots) makeSnake({ bot: true, mass: rand(8, 36) });
+      if (liveBots < wantBots) makeSnake({ bot: true, mass: rand(8, 14) });
       for (let i = snakes.length - 1; i >= 0; i--) {
         const s = snakes[i];
         if (!s.alive && s !== me) {
@@ -569,6 +575,13 @@
       const pulse = 1 + Math.sin(t * 6 + f.id) * 0.12;
       ctx.globalAlpha = 0.95;
       ctx.fillStyle = f.color;
+      if (f.kill) {
+        ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, f.r * cam.z * pulse * 2.1, 0, PI2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
       ctx.beginPath();
       ctx.arc(p.x, p.y, f.r * cam.z * pulse, 0, PI2);
       ctx.fill();
@@ -673,7 +686,11 @@
   function pointToAngle(x, y) {
     input.ax = x - W / 2;
     input.ay = y - H / 2;
-    if (Math.hypot(input.ax, input.ay) > 8) input.angle = Math.atan2(input.ay, input.ax);
+    const len = Math.hypot(input.ax, input.ay);
+    if (len < 28) return;
+    const want = Math.atan2(input.ay, input.ax);
+    const d = norm(want - input.angle);
+    input.angle += clamp(d, -0.12, 0.12);
   }
   canvas.addEventListener("pointerdown", (e) => {
     unlockAudio();
@@ -709,7 +726,7 @@
       ]),
     };
     if (foodDirty) {
-      msg.f = food.map((f) => [f.id, f.x, f.y, f.color, f.r, f.value]);
+      msg.f = food.map((f) => [f.id, f.x, f.y, f.color, f.r, f.value, f.kill ? 1 : 0]);
       foodDirty = false;
     }
     return msg;
@@ -733,7 +750,7 @@
     for (let i = snakes.length - 1; i >= 0; i--) if (!seen.has(snakes[i].id)) snakes.splice(i, 1);
     if (msg.f) {
       food.length = 0;
-      for (const row of msg.f) food.push({ id: row[0], x: row[1], y: row[2], color: row[3], r: row[4], value: row[5], special: row[4] > 5.5 });
+      for (const row of msg.f) food.push({ id: row[0], x: row[1], y: row[2], color: row[3], r: row[4], value: row[5], special: false, kill: !!row[6] });
     }
   }
   function broadcastState() {
