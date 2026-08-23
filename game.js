@@ -1,12 +1,11 @@
 (() => {
-  const WORLD = 5200;
-  const FOOD_N = 420;
-  const BOTS_SOLO = 16;
-  const BOTS_MULTI = 10;
+  const WORLD = 5800;
+  const FOOD_N = 560;
+  const BOTS_SOLO = 30;
+  const BOTS_MULTI = 18;
   const MAX_HUMANS = 8;
-  const START_MASS = 12;
+  const START_MASS = 10;
   const EAT_RATIO = 1.12;
-  const BOOST_COST = 7.2;
   const PI2 = Math.PI * 2;
   const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
   const COLORS = [
@@ -17,7 +16,8 @@
   const BOT_NAMES = [
     "小魚", "豆豆", "閃電", "糯米", "泡泡", "鯊魚", "芒果", "幽靈",
     "企鵝", "布丁", "芝麻", "火箭", "雪球", "西瓜", "辣椒", "奶茶",
-    "夜貓", "旋風", "糖糖", "黑鯊",
+    "夜貓", "旋風", "糖糖", "黑鯊", "小白", "阿呆", "飛魚", "玉米",
+    "章魚", "栗子", "跳跳", "豆芽", "蝸牛", "火龍", "毛毛", "汽水",
   ];
 
   const canvas = document.getElementById("c");
@@ -25,7 +25,8 @@
   const $ = (id) => document.getElementById(id);
   const ui = {
     menu: $("menu"), join: $("join"), dead: $("dead"), hud: $("hud"),
-    boost: $("boost"), board: $("board"), rank: $("rank"), score: $("score"),
+    boost: $("boost"), boostBar: $("boostBar"), exitBtn: $("exitBtn"),
+    board: $("board"), rank: $("rank"), score: $("score"),
     kills: $("kills"), roomBar: $("roomBar"), roomCode: $("roomCode"),
     name: $("name"), joinCode: $("joinCode"), toast: $("toast"),
     deadTitle: $("deadTitle"), deadScore: $("deadScore"), deadHint: $("deadHint"),
@@ -62,9 +63,9 @@
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-  function radius(mass) { return 7.2 + Math.pow(Math.max(1, mass), 0.44) * 1.22; }
-  function spacing(mass) { return Math.max(4.2, radius(mass) * 0.4); }
-  function segs(mass) { return Math.max(14, (12 + mass * 0.62) | 0); }
+  function radius(mass) { return 5.8 + Math.pow(Math.max(1, mass), 0.36) * 1.02; }
+  function spacing(mass) { return Math.max(3.5, radius(mass) * 0.34); }
+  function segs(mass) { return Math.max(28, Math.min(170, (26 + mass * 1.45) | 0)); }
   function speedOf(s) {
     const slow = 1 - Math.min(0.28, s.mass / 900);
     return (152 + 40 / (1 + radius(s.mass) * 0.04)) * slow * (s.boost ? 1.85 : 1);
@@ -172,6 +173,7 @@
       targetAngle: ang,
       mass,
       boost: false,
+      stamina: 1,
       alive: true,
       bot: !!opts.bot,
       human: !!opts.human,
@@ -196,7 +198,7 @@
     }
     for (let i = 0; i < 10; i++) addFood(undefined, undefined, undefined, undefined, true);
     me = makeSnake({ name: playerName(), human: true, color: COLORS[0], protect: 2200 });
-    for (let i = 0; i < botCount; i++) makeSnake({ bot: true, mass: rand(10, 28) });
+    for (let i = 0; i < botCount; i++) makeSnake({ bot: true, mass: rand(8, 42) });
     cam.x = me.pts[0].x; cam.y = me.pts[0].y; cam.z = 1;
     input.angle = me.angle;
     tipUntil = performance.now() + 3200;
@@ -236,7 +238,7 @@
       diedTo = eater ? eater.name : "";
       beep(180, 0.28, "triangle", 0.07);
       if (netMode === "solo") {
-        showDead(eater ? "被 " + eater.name + " 吃掉了" : "撞上去了", Math.floor(best), "本局最長");
+        showDead(eater ? "被 " + eater.name + " 吃掉了" : "撞上去了", segs(best), "本局最長");
       } else {
         toast(eater ? "被 " + eater.name + " 吃了，即將重生" : "掛了，即將重生");
         respawnAt = performance.now() + 1400;
@@ -293,7 +295,7 @@
     if (flee) {
       s.mood = "flee";
       s.targetAngle = Math.atan2(head.y - flee.pts[0].y, head.x - flee.pts[0].x) + rand(-0.2, 0.2);
-      s.boost = fd < 170 && s.mass > 18;
+      s.boost = fd < 170 && s.stamina > 0.2;
       return;
     }
     if (hunt && (s.moodT <= 0 || s.mood === "hunt")) {
@@ -303,7 +305,7 @@
       const cut = hunt.pts[Math.min(8, hunt.pts.length - 1)];
       const aim = Math.random() < 0.55 ? cut : h;
       s.targetAngle = Math.atan2(aim.y - head.y, aim.x - head.x);
-      s.boost = hd < 150 && s.mass > 20;
+      s.boost = hd < 150 && s.stamina > 0.25;
       return;
     }
     if (s.moodT <= 0) {
@@ -361,13 +363,12 @@
       const lastP = s.pts[s.pts.length - 1];
       s.pts.push({ x: lastP.x, y: lastP.y });
     }
-    if (s.boost) {
-      s.mass -= BOOST_COST * dt;
-      if (s.mass < 10) { s.mass = 10; s.boost = false; }
-      if (Math.random() < dt * 9 && food.length < FOOD_N + 80) {
-        const tail = s.pts[s.pts.length - 1];
-        addFood(tail.x, tail.y, 0.9, s.color, false);
-      }
+    if (s.stamina == null) s.stamina = 1;
+    if (s.boost && s.stamina > 0.02) {
+      s.stamina = Math.max(0, s.stamina - dt * 0.38);
+      if (s.stamina <= 0.02) s.boost = false;
+    } else {
+      s.stamina = Math.min(1, s.stamina + dt * 0.26);
     }
   }
 
@@ -422,19 +423,19 @@
     if (netMode === "client") {
       if (me && me.alive) {
         me.targetAngle = input.angle;
-        me.boost = input.boost && me.mass > 12;
+        me.boost = input.boost && me.stamina > 0.05;
         stepSnake(me, dt);
       }
     } else {
       if (me && me.alive) {
         me.targetAngle = input.angle;
-        me.boost = input.boost && me.mass > 12;
+        me.boost = input.boost && me.stamina > 0.05;
       }
       for (const s of snakes) stepSnake(s, dt);
       eatAndFight();
       const wantBots = netMode === "solo" ? BOTS_SOLO : BOTS_MULTI;
       const liveBots = snakes.filter((s) => s.bot && s.alive).length;
-      if (liveBots < wantBots) makeSnake({ bot: true, mass: rand(10, 24) });
+      if (liveBots < wantBots) makeSnake({ bot: true, mass: rand(8, 36) });
       for (let i = snakes.length - 1; i >= 0; i--) {
         const s = snakes[i];
         if (!s.alive && s !== me) {
@@ -485,13 +486,15 @@
     }
     const flash = performance.now() < s.protect && ((performance.now() / 120) | 0) % 2 === 0;
     ctx.globalAlpha = !s.alive ? 0.25 : flash ? 0.55 : 1;
-    const step = s.pts.length > 70 ? 2 : 1;
-    for (let i = s.pts.length - 1; i >= 0; i -= step) {
+    const step = s.pts.length > 110 ? 3 : s.pts.length > 50 ? 2 : 1;
+    const last = s.pts.length - 1 || 1;
+    for (let i = last; i >= 0; i -= step) {
       const p = w2s(s.pts[i].x, s.pts[i].y);
-      const k = i / (s.pts.length - 1 || 1);
+      const k = i / last;
+      const tail = k < 0.18 ? 0.55 + k / 0.18 * 0.45 : 1;
       ctx.fillStyle = s.color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r * (0.86 + 0.14 * k), 0, PI2);
+      ctx.arc(p.x, p.y, r * tail, 0, PI2);
       ctx.fill();
       if (i % (8 * step) === 0) {
         ctx.fillStyle = "rgba(255,255,255,0.13)";
@@ -615,10 +618,11 @@
     const ranked = snakes.filter((s) => s.alive).sort((a, b) => b.mass - a.mass);
     const rank = ranked.indexOf(me) + 1;
     ui.rank.textContent = rank > 0 ? String(rank) : "-";
-    ui.score.textContent = String(Math.floor(me.mass));
+    ui.score.textContent = String(me.pts.length);
     ui.kills.textContent = String(kills);
+    if (ui.boostBar) ui.boostBar.style.height = Math.round((me.stamina || 0) * 100) + "%";
     ui.board.innerHTML = ranked.slice(0, 6).map((s, i) =>
-      `<div class="row ${s === me ? "me" : ""}"><span>${i + 1}. ${esc(s.name)}</span><span>${Math.floor(s.mass)}</span></div>`
+      `<div class="row ${s === me ? "me" : ""}"><span>${i + 1}. ${esc(s.name)}</span><span>${s.pts.length}</span></div>`
     ).join("");
     ui.feed.innerHTML = feed.map((f) => `<div>${esc(f.text)}</div>`).join("");
   }
@@ -631,6 +635,7 @@
     ui.hud.classList.remove("hidden");
     ui.feed.classList.remove("hidden");
     ui.boost.classList.remove("hidden");
+    ui.exitBtn.classList.remove("hidden");
     ui.roomBar.classList.toggle("hidden", netMode === "solo");
   }
   function showMenu() {
@@ -641,6 +646,7 @@
     ui.hud.classList.add("hidden");
     ui.feed.classList.add("hidden");
     ui.boost.classList.add("hidden");
+    ui.exitBtn.classList.add("hidden");
     ui.roomBar.classList.add("hidden");
     ui.tip.classList.remove("show");
     closeNet();
@@ -652,6 +658,7 @@
     ui.deadHint.textContent = hint;
     ui.dead.classList.remove("hidden");
     ui.boost.classList.add("hidden");
+    ui.exitBtn.classList.add("hidden");
   }
 
   function loop(ts) {
@@ -754,7 +761,7 @@
     if (!msg || !msg.t) return;
     if (netMode === "host" && msg.t === "in") {
       const s = snakes.find((q) => q.id === msg.id && q.human);
-      if (s && s.alive) { s.targetAngle = msg.a; s.boost = !!msg.b && s.mass > 12; }
+      if (s && s.alive) { s.targetAngle = msg.a; s.boost = !!msg.b && s.stamina > 0.05; }
     }
     if (netMode === "client" && msg.t === "st") applyState(msg);
     if (msg.t === "hello" && netMode === "host") {
@@ -858,6 +865,10 @@
     } else startSolo();
   };
   $("btnHome").onclick = showMenu;
+  ui.exitBtn.onclick = () => { if (mode === "play" || mode === "dead") showMenu(); };
+  window.addEventListener("keydown", (e) => {
+    if (e.code === "Escape" && (mode === "play" || mode === "dead")) showMenu();
+  });
   $("copyRoom").onclick = async () => {
     const url = location.origin + location.pathname + "?room=" + roomCode;
     try {

@@ -102,9 +102,23 @@
     }
     .how b { color: var(--gold); }
 
+    #exitBtn {
+      position: fixed;
+      left: calc(10px + var(--safe-l));
+      top: calc(10px + var(--safe-t));
+      z-index: 7;
+      height: 40px;
+      padding: 0 16px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(8, 12, 22, 0.88);
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 800;
+    }
     #hud {
       position: fixed;
-      top: calc(10px + var(--safe-t));
+      top: calc(56px + var(--safe-t));
       left: calc(10px + var(--safe-l));
       z-index: 6;
       display: flex;
@@ -166,8 +180,19 @@
       font-weight: 900;
       font-size: 16px;
       z-index: 6;
+      overflow: hidden;
     }
     #boost.down, #boost:active { background: rgba(255, 209, 102, 0.45); transform: scale(0.96); }
+    #boostBar {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 100%;
+      background: rgba(255, 209, 102, 0.28);
+      pointer-events: none;
+    }
+    #boost span { position: relative; z-index: 1; }
     #tip {
       position: fixed;
       left: 50%;
@@ -208,6 +233,7 @@
 </head>
 <body>
   <canvas id="c"></canvas>
+  <button id="exitBtn" class="hidden" type="button">退出</button>
   <div id="hud" class="hidden">
     <div class="pill">第 <b id="rank">-</b> 名　長度 <b id="score">0</b>　擊殺 <b id="kills">0</b></div>
     <div class="board" id="board"></div>
@@ -217,8 +243,8 @@
     <span id="roomCode">房間 ----</span>
     <button id="copyRoom" type="button">複製邀請</button>
   </div>
-  <button id="boost" class="hidden" type="button">加速</button>
-  <div id="tip">拖動轉向 · 大的吃小的</div>
+  <button id="boost" class="hidden" type="button"><i id="boostBar"></i><span>加速</span></button>
+  <div id="tip">拖動轉向 · 越吃越長</div>
   <div id="toast"></div>
 
   <div id="menu">
@@ -232,9 +258,9 @@
       <button class="btn ghost" id="btnJoin" type="button">加入房間</button>
       <div class="how">
         <b>規則</b><br/>
-        手指拖去哪，蛇頭就朝哪裡衝。<br/>
-        吃亮點會變長。你比別人壯，撞到他就能吃掉。<br/>
-        去撞比你大的，你會被吃。長按加速會變短一點。
+        手指拖去哪，蛇頭就朝哪裡衝。左上角可退出。<br/>
+        吃亮點會變長、也會稍微變粗。比別人長就能吃掉他。<br/>
+        去撞比你大的會被吃。加速不會扣分數。
       </div>
     </div>
   </div>
@@ -260,6 +286,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="game.js"></script>
+  <script src="game.js?v=3"></script>
 </body>
 </html>
