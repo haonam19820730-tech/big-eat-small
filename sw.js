@@ -1,4 +1,4 @@
-const CACHE = "eat-v6";
+const CACHE = "eat-v7";
 const ASSETS = ["./", "./index.html", "./game.js", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", (e) => {

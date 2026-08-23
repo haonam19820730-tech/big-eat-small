@@ -50,6 +50,7 @@
   let peer = null;
   const conns = new Map();
   let foodDirty = true, netAcc = 0, physAcc = 0, toastTimer = 0, tipUntil = 0, matchOver = false;
+  let transferring = false, reconnecting = false, restartTimer = 0;
   let ac = null;
   const foodGrid = new Map();
   const bodyGrid = new Map();
@@ -224,14 +225,137 @@
     }
   }
 
-  function kickIfNeeded(s) {
-    if (netMode !== "host" || !s.human || s === me) return;
-    for (const [k, c] of conns) {
-      if (c.pid === s.id) {
-        try { c.send(JSON.stringify({ t: "kicked" })); c.close(); } catch (_) {}
-        conns.delete(k);
+  function pickSuccessor() {
+    const prefer = [];
+    const any = [];
+    for (const c of conns.values()) {
+      if (!c.open) continue;
+      const s = snakes.find((q) => q.id === c.pid && q.human);
+      if (!s) continue;
+      if (!s.out) prefer.push({ snake: s, conn: c });
+      else any.push({ snake: s, conn: c });
+    }
+    return prefer[0] || any[0] || null;
+  }
+
+  function bindHostPeer(code) {
+    try { if (peer && !peer.destroyed) peer.destroy(); } catch (_) {}
+    peer = new Peer("eatgame" + code, { debug: 0 });
+    peer.on("open", () => {
+      toast("房間 " + code + " 開著，朋友可加入");
+      ui.roomBar.classList.remove("hidden");
+      ui.roomCode.textContent = "房間 " + code;
+    });
+    peer.on("disconnected", () => {
+      if (!peer.destroyed && netMode === "host") {
+        try { peer.reconnect(); } catch (_) {}
+      }
+    });
+    peer.on("error", (err) => {
+      if (netMode !== "host") return;
+      if (err.type === "unavailable-id") {
+        setTimeout(() => { if (netMode === "host") bindHostPeer(code); }, 700);
+        return;
+      }
+      if (err.type === "network" || err.type === "disconnected" || err.type === "socket-closed") {
+        try { if (peer && !peer.destroyed) peer.reconnect(); } catch (_) {}
+        toast("網路不穩，正在重連房間…");
+        return;
+      }
+      toast("連線出問題，房間還在");
+    });
+    peer.on("connection", (conn) => {
+      conns.set(conn.peer, conn);
+      conn.on("open", () => wireConn(conn));
+    });
+  }
+
+  function transferHost(leaveAfter) {
+    if (netMode !== "host" || transferring) return false;
+    const suc = pickSuccessor();
+    if (!suc) return false;
+    transferring = true;
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = 0; }
+    const payload = {
+      t: "promote",
+      code: roomCode,
+      state: packState(),
+      yourId: suc.snake.id,
+      matchOver: !!matchOver,
+    };
+    try { suc.conn.send(JSON.stringify(payload)); } catch (_) {}
+    const rehost = JSON.stringify({ t: "rehost", code: roomCode });
+    for (const c of conns.values()) {
+      if (c !== suc.conn && c.open) try { c.send(rehost); } catch (_) {}
+    }
+    toast("房主已交給 " + suc.snake.name);
+    const myName = me ? me.name : playerName();
+    const code = roomCode;
+    setTimeout(() => {
+      try { if (peer) peer.destroy(); } catch (_) {}
+      peer = null;
+      conns.clear();
+      transferring = false;
+      if (leaveAfter) {
+        netMode = "solo";
+        roomCode = "";
+        showMenu();
+        return;
+      }
+      netMode = "client";
+      reconnecting = true;
+      setTimeout(() => {
+        peer = new Peer({ debug: 0 });
+        peer.on("open", () => {
+          const conn = peer.connect("eatgame" + code, { reliable: true });
+          conns.set("host", conn);
+          conn.on("open", () => {
+            reconnecting = false;
+            wireConn(conn);
+            conn.send(JSON.stringify({ t: "hello", name: myName }));
+          });
+          conn.on("error", () => { reconnecting = false; toast("交房主後重連失敗"); });
+        });
+      }, 900);
+    }, 250);
+    return true;
+  }
+
+  function tryLeaveRoom() {
+    if (netMode === "host") {
+      if (pickSuccessor()) {
+        transferHost(true);
+        return;
       }
     }
+    showMenu();
+  }
+
+  function restartRound() {
+    if (netMode === "client") return;
+    matchOver = false;
+    if (restartTimer) { clearTimeout(restartTimer); restartTimer = 0; }
+    const guests = [];
+    for (const c of conns.values()) {
+      const old = snakes.find((q) => q.id === c.pid);
+      guests.push({
+        conn: c,
+        name: old ? old.name : (c.guestName || "玩家"),
+        color: old ? old.color : pick(COLORS),
+      });
+    }
+    const myName = me ? me.name : playerName();
+    const myColor = me ? me.color : COLORS[0];
+    resetWorld(netMode === "host" ? BOTS_MULTI : BOTS_SOLO);
+    if (me) { me.name = myName; me.color = myColor; }
+    for (const g of guests) {
+      const ns = makeSnake({ name: g.name, human: true, color: g.color, protect: 2500 });
+      g.conn.pid = ns.id;
+      if (g.conn.open) try { g.conn.send(JSON.stringify({ t: "rst", id: ns.id })); } catch (_) {}
+    }
+    showPlay();
+    foodDirty = true;
+    if (netMode === "host") broadcastState();
   }
 
   function remainingPlayers() {
@@ -245,12 +369,15 @@
     matchOver = true;
     const w = left[0];
     const myScore = me ? Math.floor(me.score) : 0;
-    if (!w) showDead("沒人獲勝", myScore, "再來一局");
-    else if (w === me) showDead("你贏了", myScore, "最後留下的就是贏家");
-    else showDead(w.name + " 獲勝", myScore, "最後留下的就是贏家");
+    if (!w) showDead("沒人獲勝", myScore, "3 秒後新的一局");
+    else if (w === me) showDead("你贏了", myScore, "3 秒後新的一局，房間繼續開著");
+    else showDead(w.name + " 獲勝", myScore, "3 秒後新的一局，房間繼續開著");
     if (netMode === "host") {
-      const raw = JSON.stringify({ t: "over", name: w ? w.name : "", win: w === me ? 0 : 1 });
+      const raw = JSON.stringify({ t: "over", name: w ? w.name : "" });
       for (const c of conns.values()) if (c.open) try { c.send(raw); } catch (_) {}
+      restartTimer = setTimeout(() => { if (netMode === "host") restartRound(); }, 2800);
+    } else if (netMode === "solo") {
+      restartTimer = setTimeout(() => restartRound(), 2800);
     }
   }
 
@@ -304,8 +431,9 @@
       addFeed(victim.name + " 出局了");
       if (victim === me) {
         beep(160, 0.3, "triangle", 0.07);
-        toast("死了 3 次，出局");
-      } else kickIfNeeded(victim);
+        toast("這局出局，先看著，下一局還能玩");
+        if (netMode === "host") transferHost(false);
+      }
     } else {
       victim.respawnAt = performance.now() + 1400;
       if (victim === me) toast("還剩 " + leftLives + " 條命");
@@ -693,7 +821,7 @@
     ui.dead.classList.add("hidden");
     ui.hud.classList.remove("hidden");
     ui.feed.classList.remove("hidden");
-    ui.boost.classList.remove("hidden");
+    ui.boost.classList.toggle("hidden", !!(me && me.out));
     ui.exitBtn.classList.remove("hidden");
     ui.roomBar.classList.toggle("hidden", netMode === "solo");
   }
@@ -782,10 +910,10 @@
   function packState() {
     const msg = {
       t: "st",
-      p: snakes.filter((s) => !s.out && s.pts[0]).map((s) => [
+      p: snakes.filter((s) => s.pts && s.pts[0] && (s.human || !s.out)).map((s) => [
         s.id, s.pts[0].x, s.pts[0].y, s.angle, s.mass,
         s.boost ? 1 : 0, s.alive ? 1 : 0, s.name, s.color, s.human ? 1 : 0,
-        s.deaths || 0, Math.floor(s.score || 0),
+        s.deaths || 0, Math.floor(s.score || 0), s.out ? 1 : 0,
       ]),
     };
     if (foodDirty) {
@@ -797,7 +925,7 @@
   function applyState(msg) {
     const seen = new Set();
     for (const row of msg.p) {
-      const [id, x, y, angle, mass, boost, alive, name, color, human, deaths, score] = row;
+      const [id, x, y, angle, mass, boost, alive, name, color, human, deaths, score, out] = row;
       seen.add(id);
       let s = snakes.find((q) => q.id === id);
       if (!s) {
@@ -815,7 +943,7 @@
       }
       s.angle = angle; s.mass = mass; s.boost = !!boost; s.alive = !!alive;
       s.name = name; s.color = color;
-      s.deaths = deaths || 0; s.score = score || s.score || 0;
+      s.deaths = deaths || 0; s.score = score || s.score || 0; s.out = !!out;
       if (me && id === me.id) me = s;
     }
     for (let i = snakes.length - 1; i >= 0; i--) if (!seen.has(snakes[i].id)) snakes.splice(i, 1);
@@ -844,14 +972,28 @@
     }
     if (netMode === "client" && msg.t === "st") applyState(msg);
     if (msg.t === "hello" && netMode === "host") {
-      if (snakes.filter((s) => s.human && !s.out).length >= MAX_HUMANS) {
+      conn.guestName = String(msg.name || "玩家").slice(0, 8);
+      const exist = snakes.find((s) => s.human && (s.name === conn.guestName || (msg.id && s.id === msg.id)));
+      if (exist) {
+        conn.pid = exist.id;
+        foodDirty = true;
+        const st0 = packState();
+        conn.send(JSON.stringify({ t: "you", id: exist.id, p: st0.p, f: st0.f }));
+        return;
+      }
+      if (snakes.filter((s) => s.human).length >= MAX_HUMANS) {
         conn.send(JSON.stringify({ t: "full" })); return;
       }
-      const s = makeSnake({ name: String(msg.name || "玩家").slice(0, 8), human: true, protect: 2500 });
+      if (matchOver) {
+        restartRound();
+        toast(conn.guestName + " 加入了");
+        return;
+      }
+      const s = makeSnake({ name: conn.guestName, human: true, protect: 2500 });
       conn.pid = s.id; foodDirty = true;
       const st = packState();
       conn.send(JSON.stringify({ t: "you", id: s.id, p: st.p, f: st.f }));
-      toast(s.name + " 加入了");
+      toast(s.name + " 加入了，房間還開著");
     }
     if (msg.t === "you" && netMode === "client") {
       applyState(msg);
@@ -860,15 +1002,11 @@
       toast("已進入房間");
     }
     if (msg.t === "full") toast("房間滿了");
-    if (msg.t === "kicked") {
-      toast("死了 3 次，已退出房間");
-      showMenu();
-    }
     if (msg.t === "over") {
       matchOver = true;
       const myScore = me ? Math.floor(me.score) : 0;
-      if (msg.name && msg.name === (me && me.name)) showDead("你贏了", myScore, "最後留下的就是贏家");
-      else showDead((msg.name || "有人") + " 獲勝", myScore, "最後留下的就是贏家");
+      if (msg.name && me && msg.name === me.name) showDead("你贏了", myScore, "3 秒後新的一局");
+      else showDead((msg.name || "有人") + " 獲勝", myScore, "3 秒後新的一局，不要退出");
     }
     if (msg.t === "rst") {
       matchOver = false;
@@ -877,17 +1015,63 @@
       showPlay();
       toast("新的一局開始");
     }
+    if (msg.t === "promote") {
+      reconnecting = true;
+      roomCode = msg.code;
+      if (msg.state) applyState(msg.state);
+      if (msg.yourId) me = snakes.find((s) => s.id === msg.yourId) || me;
+      try { if (peer) peer.destroy(); } catch (_) {}
+      conns.clear();
+      setTimeout(() => {
+        netMode = "host";
+        bindHostPeer(roomCode);
+        reconnecting = false;
+        showPlay();
+        toast("你現在是房主，朋友還能加入");
+        if (msg.matchOver) setTimeout(() => { if (netMode === "host") restartRound(); }, 400);
+      }, 900);
+    }
+    if (msg.t === "rehost") {
+      reconnecting = true;
+      const code = msg.code;
+      const name = me ? me.name : playerName();
+      try { if (peer) peer.destroy(); } catch (_) {}
+      conns.clear();
+      setTimeout(() => {
+        roomCode = code;
+        netMode = "client";
+        peer = new Peer({ debug: 0 });
+        peer.on("open", () => {
+          const conn = peer.connect("eatgame" + code, { reliable: true });
+          conns.set("host", conn);
+          conn.on("open", () => {
+            reconnecting = false;
+            wireConn(conn);
+            conn.send(JSON.stringify({ t: "hello", name }));
+            toast("已連上新房主");
+          });
+        });
+      }, 1400);
+    }
   }
   function wireConn(conn) {
     conn.on("data", (d) => onPeerData(conn, d));
     conn.on("close", () => {
       conns.delete(conn.peer);
+      if (transferring || reconnecting) return;
       if (netMode === "host" && conn.pid) {
         const s = snakes.find((q) => q.id === conn.pid);
-        if (s && !s.out) { s.alive = false; s.out = true; checkEnd(); }
-        toast("有人離開了");
+        if (s) {
+          s.alive = false;
+          const ix = snakes.indexOf(s);
+          if (ix >= 0) snakes.splice(ix, 1);
+          checkEnd();
+        }
+        toast("有人離開了，房間還開著");
       }
-      if (netMode === "client") { toast("房主已離開"); showMenu(); }
+      if (netMode === "client") {
+        toast("房主斷線，正在等新房主…");
+      }
     });
   }
   function startHost() {
@@ -898,16 +1082,7 @@
     resetWorld(BOTS_MULTI);
     ui.roomCode.textContent = "房間 " + roomCode;
     showPlay();
-    peer = new Peer("eatgame" + roomCode, { debug: 0 });
-    peer.on("open", () => toast("房間已開，把代碼傳給朋友"));
-    peer.on("error", (err) => {
-      if (err.type === "unavailable-id") { startHost(); return; }
-      toast("開房間失敗，改單人"); netMode = "solo"; ui.roomBar.classList.add("hidden");
-    });
-    peer.on("connection", (conn) => {
-      conns.set(conn.peer, conn);
-      conn.on("open", () => wireConn(conn));
-    });
+    bindHostPeer(roomCode);
   }
   function startJoin(code) {
     if (typeof Peer === "undefined") { toast("多人連線載入失敗"); return; }
@@ -952,30 +1127,13 @@
   $("btnJoinGo").onclick = () => startJoin(ui.joinCode.value);
   $("btnAgain").onclick = () => {
     unlockAudio();
-    matchOver = false;
-    if (netMode === "host") {
-      const guests = [];
-      for (const c of conns.values()) {
-        const old = snakes.find((q) => q.id === c.pid);
-        guests.push({ conn: c, name: old ? old.name : "玩家", color: old ? old.color : pick(COLORS) });
-      }
-      resetWorld(BOTS_MULTI);
-      for (const g of guests) {
-        const ns = makeSnake({ name: g.name, human: true, color: g.color, protect: 2500 });
-        g.conn.pid = ns.id;
-        if (g.conn.open) try { g.conn.send(JSON.stringify({ t: "rst", id: ns.id })); } catch (_) {}
-      }
-      showPlay();
-      foodDirty = true;
-      broadcastState();
-    } else if (netMode === "client") {
-      toast("等房主開新的一局");
-    } else startSolo();
+    if (netMode === "host" || netMode === "solo") restartRound();
+    else toast("等房主開新的一局，不要退出");
   };
-  $("btnHome").onclick = showMenu;
-  ui.exitBtn.onclick = () => { if (mode === "play" || mode === "dead") showMenu(); };
+  $("btnHome").onclick = () => tryLeaveRoom();
+  ui.exitBtn.onclick = () => { if (mode === "play" || mode === "dead") tryLeaveRoom(); };
   window.addEventListener("keydown", (e) => {
-    if (e.code === "Escape" && (mode === "play" || mode === "dead")) showMenu();
+    if (e.code === "Escape" && (mode === "play" || mode === "dead")) tryLeaveRoom();
   });
   $("copyRoom").onclick = async () => {
     const url = location.origin + location.pathname + "?room=" + roomCode;
