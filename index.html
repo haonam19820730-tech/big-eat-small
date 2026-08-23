@@ -244,13 +244,13 @@
     <button id="copyRoom" type="button">複製邀請</button>
   </div>
   <button id="boost" class="hidden" type="button"><i id="boostBar"></i><span>加速</span></button>
-  <div id="tip">拖動轉向 · 越吃越長</div>
+  <div id="tip">頭不要撞到別人的身體</div>
   <div id="toast"></div>
 
   <div id="menu">
     <div class="card">
       <h1>大吃小</h1>
-      <p class="sub">像貪食蛇，但大的可以吃小的<br/>越吃越長，越長越強</p>
+      <p class="sub">像貪食蛇：頭撞到別人的身體就會死<br/>越吃越長，頭也會越來越大</p>
       <label for="name">你的名字</label>
       <input id="name" maxlength="8" placeholder="玩家" autocomplete="off" />
       <button class="btn primary" id="btnSolo" type="button">開始遊戲</button>
@@ -259,8 +259,8 @@
       <div class="how">
         <b>規則</b><br/>
         手指拖去哪，蛇頭就朝哪裡衝。左上角可退出。<br/>
-        吃亮點會變長、也會稍微變粗。比別人長就能吃掉他。<br/>
-        去撞比你大的會被吃。加速不會扣分數。
+        吃亮點會變長，頭會變大。別人的頭撞到你身體，他就死。<br/>
+        你的頭去撞別人的身體，你會死。死掉會沿路噴分數。加速不扣分。
       </div>
     </div>
   </div>
@@ -286,6 +286,6 @@
   </div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
-  <script src="game.js?v=3"></script>
+  <script src="game.js?v=4"></script>
 </body>
 </html>

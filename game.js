@@ -5,7 +5,6 @@
   const BOTS_MULTI = 18;
   const MAX_HUMANS = 8;
   const START_MASS = 10;
-  const EAT_RATIO = 1.12;
   const PI2 = Math.PI * 2;
   const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
   const COLORS = [
@@ -63,12 +62,14 @@
   function esc(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
-  function radius(mass) { return 5.8 + Math.pow(Math.max(1, mass), 0.36) * 1.02; }
-  function spacing(mass) { return Math.max(3.5, radius(mass) * 0.34); }
+  function bodyRadius(mass) { return 5.4 + Math.pow(Math.max(1, mass), 0.40) * 1.18; }
+  function headRadius(mass) { return 8.4 + Math.pow(Math.max(1, mass), 0.52) * 2.1; }
+  function radius(mass) { return headRadius(mass); }
+  function spacing(mass) { return Math.max(3.3, bodyRadius(mass) * 0.34); }
   function segs(mass) { return Math.max(28, Math.min(170, (26 + mass * 1.45) | 0)); }
   function speedOf(s) {
     const slow = 1 - Math.min(0.28, s.mass / 900);
-    return (152 + 40 / (1 + radius(s.mass) * 0.04)) * slow * (s.boost ? 1.85 : 1);
+    return (148 + 36 / (1 + headRadius(s.mass) * 0.035)) * slow * (s.boost ? 1.85 : 1);
   }
   function makeCode() {
     let s = "";
@@ -205,12 +206,14 @@
     ui.tip.classList.add("show");
   }
 
-  function dropBody(s, keep) {
-    const n = clamp((s.pts.length * (1 - keep)) | 0, 8, 70);
-    const step = Math.max(1, (s.pts.length / n) | 0);
+  function dropBody(s) {
+    const pieces = clamp(s.pts.length, 14, 100);
+    const each = Math.max(1.5, s.mass / pieces);
+    const step = Math.max(1, (s.pts.length / pieces) | 0);
     for (let i = 0; i < s.pts.length; i += step) {
       const p = s.pts[i];
-      addFood(p.x + rand(-6, 6), p.y + rand(-6, 6), rand(1.6, 3.4), s.color, false);
+      addFood(p.x + rand(-12, 12), p.y + rand(-12, 12), rand(each * 0.75, each * 1.25), s.color, each > 2.4);
+      if (i % 4 === 0) burst(p.x, p.y, s.color, 5, 150);
     }
   }
 
@@ -220,27 +223,26 @@
     if (eater && performance.now() < eater.protect) return;
     victim.alive = false;
     victim.boost = false;
-    burst(victim.pts[0].x, victim.pts[0].y, victim.color, 28, 280);
-    dropBody(victim, 0.08);
+    burst(victim.pts[0].x, victim.pts[0].y, victim.color, 36, 320);
+    dropBody(victim);
     if (eater && eater.alive) {
-      eater.mass += victim.mass * 0.42;
       eater.kills += 1;
-      addFeed(eater.name + " 吃了 " + victim.name);
+      addFeed(victim.name + " 撞上了 " + eater.name);
       if (eater === me) {
         kills += 1;
         cam.sx = 10;
         beep(220, 0.09, "sawtooth", 0.06);
         beep(440, 0.12, "square", 0.04);
       }
-    } else addFeed(victim.name + " 掛了");
+    } else addFeed(victim.name + " 撞上去了");
     if (victim === me) {
       best = Math.max(best, me.mass);
       diedTo = eater ? eater.name : "";
       beep(180, 0.28, "triangle", 0.07);
       if (netMode === "solo") {
-        showDead(eater ? "被 " + eater.name + " 吃掉了" : "撞上去了", segs(best), "本局最長");
+        showDead(eater ? "頭撞到 " + eater.name + " 的身體" : "頭撞到身體了", segs(best), "本局最長");
       } else {
-        toast(eater ? "被 " + eater.name + " 吃了，即將重生" : "掛了，即將重生");
+        toast(eater ? "頭撞到 " + eater.name + " 了，即將重生" : "撞上去了，即將重生");
         respawnAt = performance.now() + 1400;
       }
     }
@@ -286,9 +288,10 @@
     for (const o of snakes) {
       if (o === s || !o.alive) continue;
       const d = Math.hypot(o.pts[0].x - head.x, o.pts[0].y - head.y);
-      if (o.mass > s.mass * EAT_RATIO && d < 340 + radius(o.mass) * 4 && d < fd) {
+      const danger = 130 + bodyRadius(o.mass) * 4 + o.pts.length * 0.35;
+      if (d < danger && d < fd) {
         flee = o; fd = d;
-      } else if (s.mass > o.mass * EAT_RATIO && d < 380 && d < hd) {
+      } else if (d < 460 && d < hd) {
         hunt = o; hd = d;
       }
     }
@@ -342,7 +345,7 @@
     const sp = speedOf(s);
     let nx = s.pts[0].x + Math.cos(s.angle) * sp * dt;
     let ny = s.pts[0].y + Math.sin(s.angle) * sp * dt;
-    const r = radius(s.mass);
+    const r = headRadius(s.mass);
     if (nx < r) { nx = r; s.angle = Math.PI - s.angle; s.targetAngle = s.angle; }
     if (nx > WORLD - r) { nx = WORLD - r; s.angle = Math.PI - s.angle; s.targetAngle = s.angle; }
     if (ny < r) { ny = r; s.angle = -s.angle; s.targetAngle = s.angle; }
@@ -378,7 +381,7 @@
     for (const s of snakes) {
       if (!s.alive) continue;
       const head = s.pts[0];
-      const r = radius(s.mass);
+      const r = headRadius(s.mass);
       const eaten = [];
       nearby(foodGrid, head.x, head.y, (f) => {
         const dx = f.x - head.x, dy = f.y - head.y;
@@ -403,16 +406,14 @@
     for (const s of snakes) {
       if (!s.alive) continue;
       const head = s.pts[0];
-      const r = radius(s.mass);
+      const hr = headRadius(s.mass);
       nearby(bodyGrid, head.x, head.y, (item) => {
         if (!s.alive || item.s === s || !item.s.alive) return;
-        if (item.i < 3) return;
-        const hitR = (r + radius(item.s.mass)) * 0.58;
+        const neck = Math.max(10, ((headRadius(item.s.mass) / spacing(item.s.mass)) | 0) + 6);
+        if (item.i < neck) return;
+        const hitR = hr * 0.62 + bodyRadius(item.s.mass) * 0.78;
         const d = Math.hypot(item.x - head.x, item.y - head.y);
-        if (d < hitR) {
-          if (s.mass > item.s.mass * EAT_RATIO) kill(item.s, s);
-          else kill(s, item.s);
-        }
+        if (d < hitR) kill(s, item.s);
       });
     }
   }
@@ -474,7 +475,8 @@
 
   function drawSnake(s) {
     if (!s.pts.length) return;
-    const r = radius(s.mass) * cam.z;
+    const br = bodyRadius(s.mass) * cam.z;
+    const r = headRadius(s.mass) * cam.z;
     const head = w2s(s.pts[0].x, s.pts[0].y);
     if (head.x < -80 || head.y < -80 || head.x > W + 80 || head.y > H + 80) {
       let any = false;
@@ -494,12 +496,12 @@
       const tail = k < 0.18 ? 0.55 + k / 0.18 * 0.45 : 1;
       ctx.fillStyle = s.color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, r * tail, 0, PI2);
+      ctx.arc(p.x, p.y, br * tail, 0, PI2);
       ctx.fill();
       if (i % (8 * step) === 0) {
         ctx.fillStyle = "rgba(255,255,255,0.13)";
         ctx.beginPath();
-        ctx.arc(p.x, p.y, r * 0.45, 0, PI2);
+        ctx.arc(p.x, p.y, br * 0.42, 0, PI2);
         ctx.fill();
       }
     }
@@ -524,17 +526,6 @@
     ctx.arc(head.x + ox - ey * eye * 0.95 + ex * 1.6, head.y + oy + ex * eye * 0.95 + ey * 1.6, eye * 0.35, 0, PI2);
     ctx.arc(head.x + ox + ey * eye * 0.95 + ex * 1.6, head.y + oy - ex * eye * 0.95 + ey * 1.6, eye * 0.35, 0, PI2);
     ctx.fill();
-    if (me && s !== me && s.alive) {
-      const bigger = s.mass > me.mass * EAT_RATIO;
-      const smaller = me.mass > s.mass * EAT_RATIO;
-      if (bigger || smaller) {
-        ctx.strokeStyle = bigger ? "rgba(255,80,110,0.9)" : "rgba(61,255,154,0.9)";
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(head.x, head.y, r + 6, 0, PI2);
-        ctx.stroke();
-      }
-    }
     ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.font = "700 12px Segoe UI, Microsoft JhengHei, sans-serif";
     ctx.textAlign = "center";
@@ -558,7 +549,7 @@
       return;
     }
     if (me && me.pts[0]) {
-      const wantZ = clamp(1.15 * (26 / radius(me.mass)), 0.42, 1.28);
+      const wantZ = clamp(1.12 * (28 / headRadius(me.mass)), 0.38, 1.22);
       cam.z += (wantZ - cam.z) * 0.05;
       cam.x += (me.pts[0].x - cam.x) * 0.14;
       cam.y += (me.pts[0].y - cam.y) * 0.14;
