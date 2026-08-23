@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#070b14" />
+  <title>大吃小</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <style>
+    :root {
+      --bg: #070b14;
+      --card: rgba(12, 18, 32, 0.86);
+      --line: rgba(255, 255, 255, 0.1);
+      --text: #eef4ff;
+      --muted: #8b97ad;
+      --mint: #3dff9a;
+      --pink: #ff5b9a;
+      --blue: #6d7cff;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+      --safe-l: env(safe-area-inset-left, 0px);
+      --safe-r: env(safe-area-inset-right, 0px);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      touch-action: none;
+      user-select: none;
+      overscroll-behavior: none;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      position: fixed;
+      inset: 0;
+    }
+    .ui {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .ui > * { pointer-events: auto; }
+    .hidden { display: none !important; }
+
+    #menu, #join, #dead {
+      position: fixed;
+      inset: 0;
+      z-index: 8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: calc(20px + var(--safe-t)) 20px calc(20px + var(--safe-b));
+      background:
+        radial-gradient(circle at 20% 20%, rgba(61, 255, 154, 0.16), transparent 42%),
+        radial-gradient(circle at 80% 80%, rgba(109, 124, 255, 0.18), transparent 40%),
+        rgba(7, 11, 20, 0.72);
+      backdrop-filter: blur(8px);
+    }
+    .card {
+      width: min(420px, 100%);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 28px 22px 22px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .blob {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: var(--mint);
+      box-shadow: 0 0 18px rgba(61, 255, 154, 0.55);
+      position: relative;
+    }
+    .blob.small {
+      width: 16px;
+      height: 16px;
+      background: var(--pink);
+      box-shadow: 0 0 12px rgba(255, 91, 154, 0.6);
+      margin-top: 10px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 34px;
+      letter-spacing: 2px;
+    }
+    .sub {
+      text-align: center;
+      color: var(--muted);
+      margin: 0 0 18px;
+      font-size: 14px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      height: 48px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      font-size: 16px;
+      padding: 0 14px;
+      outline: none;
+      margin-bottom: 14px;
+    }
+    input:focus { border-color: var(--mint); }
+    .btn {
+      width: 100%;
+      height: 50px;
+      border: 0;
+      border-radius: 14px;
+      font-size: 17px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .btn.primary { background: var(--mint); color: #062214; }
+    .btn.blue { background: var(--blue); color: #fff; }
+    .btn.ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
+    }
+    .how {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .how b { color: var(--text); font-weight: 600; }
+
+    #hud {
+      position: fixed;
+      top: calc(10px + var(--safe-t));
+      left: calc(12px + var(--safe-l));
+      right: calc(12px + var(--safe-r));
+      z-index: 6;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .pill, .board {
+      background: rgba(8, 12, 22, 0.72);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 8px 10px;
+      font-size: 13px;
+      backdrop-filter: blur(8px);
+    }
+    .board { min-width: 132px; pointer-events: none; }
+    .board div { display: flex; justify-content: space-between; gap: 10px; }
+    .me { color: var(--mint); }
+    #roomBar {
+      position: fixed;
+      top: calc(10px + var(--safe-t));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 6;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      pointer-events: auto;
+    }
+    #roomBar button, #roomBar span {
+      height: 36px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(8, 12, 22, 0.8);
+      color: var(--text);
+      padding: 0 10px;
+      font-size: 13px;
+    }
+    #boost {
+      position: fixed;
+      right: calc(18px + var(--safe-r));
+      bottom: calc(28px + var(--safe-b));
+      width: 84px;
+      height: 84px;
+      border-radius: 50%;
+      border: 2px solid rgba(61, 255, 154, 0.55);
+      background: rgba(61, 255, 154, 0.16);
+      color: var(--mint);
+      font-weight: 800;
+      font-size: 16px;
+      z-index: 6;
+    }
+    #boost:active, #boost.down {
+      background: rgba(61, 255, 154, 0.4);
+      transform: scale(0.96);
+    }
+    #stick {
+      position: fixed;
+      left: calc(28px + var(--safe-l));
+      bottom: calc(28px + var(--safe-b));
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.05);
+      z-index: 6;
+      pointer-events: none;
+    }
+    #knob {
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.78);
+      left: 36px;
+      top: 36px;
+    }
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(130px + var(--safe-b));
+      transform: translateX(-50%);
+      background: rgba(8, 12, 22, 0.9);
+      border: 1px solid var(--line);
+      color: var(--text);
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      z-index: 9;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity .2s;
+    }
+    #toast.show { opacity: 1; }
+    .stat {
+      text-align: center;
+      font-size: 28px;
+      margin: 8px 0 4px;
+      color: var(--mint);
+    }
+    .hint { text-align: center; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="hud" class="hidden">
+    <div class="pill">
+      <div>分數 <b id="score">0</b></div>
+      <div>體型 <b id="mass">16</b></div>
+    </div>
+    <div class="board" id="board"></div>
+  </div>
+
+  <div id="roomBar" class="hidden">
+    <span id="roomCode">房間 ----</span>
+    <button id="copyRoom" type="button">複製邀請</button>
+  </div>
+
+  <button id="boost" class="hidden" type="button">加速</button>
+  <div id="stick" class="hidden"><div id="knob"></div></div>
+  <div id="toast"></div>
+
+  <div id="menu">
+    <div class="card">
+      <div class="logo">
+        <div class="blob"></div>
+        <div class="blob small"></div>
+      </div>
+      <h1 style="text-align:center">大吃小</h1>
+      <p class="sub">越吃越大 · 大的可以吃小的</p>
+      <label for="name">你的名字</label>
+      <input id="name" maxlength="8" placeholder="玩家" autocomplete="off" />
+      <button class="btn primary" id="btnSolo" type="button">單人對戰電腦</button>
+      <button class="btn blue" id="btnHost" type="button">開房間，找朋友玩</button>
+      <button class="btn ghost" id="btnJoin" type="button">加入房間</button>
+      <div class="how">
+        <b>怎麼玩</b><br />
+        拖動螢幕控制方向，一直往前衝。<br />
+        吃到點點會變大；碰到比你小的就能吃掉。<br />
+        被更大的撞到就會被吃。長按加速會變瘦一點。
+      </div>
+    </div>
+  </div>
+
+  <div id="join" class="hidden">
+    <div class="card">
+      <h1 style="text-align:center;font-size:26px">加入房間</h1>
+      <p class="sub">輸入朋友的 4 碼房間號</p>
+      <input id="joinCode" maxlength="4" placeholder="例如 7K2P" autocomplete="off" style="text-transform:uppercase;letter-spacing:4px;text-align:center;font-size:22px" />
+      <button class="btn primary" id="btnJoinGo" type="button">進入遊戲</button>
+      <button class="btn ghost" id="btnJoinBack" type="button">返回</button>
+    </div>
+  </div>
+
+  <div id="dead" class="hidden">
+    <div class="card">
+      <h1 style="text-align:center;font-size:26px" id="deadTitle">你被吃掉了</h1>
+      <div class="stat" id="deadScore">0</div>
+      <p class="hint" id="deadHint">最高體型</p>
+      <button class="btn primary" id="btnAgain" type="button">再玩一次</button>
+      <button class="btn ghost" id="btnHome" type="button">回選單</button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
